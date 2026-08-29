@@ -5,6 +5,7 @@ import * as db from './db.js';
 import { loadSettings, saveSettings } from './settings.js';
 import { createSession } from './lib/model.js';
 import { parseBackup, toBackup } from './lib/export.js';
+import { collapseSegments } from './lib/transcript.js';
 
 const listeners = new Set();
 
@@ -27,6 +28,7 @@ function emit() {
 export async function init() {
   try {
     state.sessions = await db.getAllSessions();
+    await repairDuplicateSegments();
     state.ready = true;
   } catch (err) {
     state.error = err.message;
@@ -146,6 +148,45 @@ export async function importBackup(raw) {
   state.sessions = await db.getAllSessions();
   emit();
   return { ok: true, added: incoming.length };
+}
+
+/* 修正前の版は、認識の途中結果を毎回「新しい行」として保存していたため、
+   同じ文が何十行も積み上がった記録が端末に残っている。
+   起動時に一度だけ畳んで直す。 */
+const REPAIR_KEY = 'kioku:repaired-duplicate-segments';
+
+export async function repairDuplicateSegments({ force = false } = {}) {
+  try {
+    if (!force && localStorage.getItem(REPAIR_KEY)) return 0;
+  } catch {
+    /* localStorage が使えない環境では毎回走らせる（何度やっても結果は変わらない） */
+  }
+
+  let removed = 0;
+  const fixed = [];
+  for (const session of state.sessions) {
+    const before = session.segments || [];
+    if (before.length < 2) continue;
+    const after = collapseSegments(before);
+    if (after.length === before.length) continue;
+    removed += before.length - after.length;
+    fixed.push({ ...session, segments: after, updatedAt: new Date().toISOString() });
+  }
+
+  if (fixed.length) {
+    await db.putSessions(fixed);
+    const byId = new Map(fixed.map((s) => [s.id, s]));
+    state.sessions = state.sessions.map((s) => byId.get(s.id) || s);
+    emit();
+  }
+
+  try {
+    localStorage.setItem(REPAIR_KEY, String(Date.now()));
+  } catch {
+    /* 記録できなくても実害はない */
+  }
+  state.repairedSegments = removed;
+  return removed;
 }
 
 export { estimateUsage } from './db.js';

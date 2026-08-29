@@ -1,7 +1,7 @@
 /* オフラインでも開けるようにアプリ本体をキャッシュする。
    利用データ（音声・文字起こし・メモ）は IndexedDB 側にあり、ここでは扱わない。 */
 
-const CACHE = 'kioku-v2';
+const CACHE = 'kioku-v3';
 const SHELL = [
   './',
   './index.html',
@@ -19,6 +19,7 @@ const SHELL = [
   './js/lib/export.js',
   './js/lib/time.js',
   './js/lib/stopwatch.js',
+  './js/lib/transcript.js',
   './js/views/dashboard.js',
   './js/views/record.js',
   './js/views/detail.js',

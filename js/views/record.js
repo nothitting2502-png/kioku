@@ -33,6 +33,7 @@ export function render(root, { navigate, params }) {
   let audioStarted = false;
   let panel = 'transcript'; // モバイルで表示する側
   let blockedHandled = false;   // マイク競合の案内を出したか
+  let lastSegmentId = null;     // 直前に積んだ行（伸びた結果の書き換え先）
   let watchdogHandle = null;    // 「開始したのに何も出ない」の見張り
 
   watch.reset();
@@ -122,7 +123,13 @@ export function render(root, { navigate, params }) {
     },
     onFinal: (seg) => {
       if (!seg.text) return;
+
+      /* Android は同じ文を伸ばしながら何度も返してくる。
+         その場合は行を増やさず、直前の行を書き換える。 */
+      if (seg.replacesLast && lastSegmentId && replaceLastSegment(seg)) return;
+
       const segment = createSegment(seg);
+      lastSegmentId = segment.id;
       store.updateSessionBuffered(session.id, (s) => ({
         segments: [...s.segments, segment],
         durationMs: Math.max(s.durationMs, watch.elapsed())
@@ -260,7 +267,29 @@ export function render(root, { navigate, params }) {
   });
 
   function appendSegment(segment) {
+    // 最初の1行が入ったら案内文は退ける
+    transcriptList.querySelector('.empty')?.remove();
     transcriptList.append(segmentRow(segment));
+  }
+
+  /** 直前の行を書き換える。編集中や行が消えている場合は諦めて新しい行にする */
+  function replaceLastSegment(seg) {
+    const current = store.getSession(session.id);
+    const target = (current?.segments || []).find((x) => x.id === lastSegmentId);
+    if (!target) return false;
+
+    const node = transcriptList.querySelector(`[data-id="${lastSegmentId}"] .seg__text`);
+    if (node && document.activeElement === node) return false;  // 手で直している最中は触らない
+
+    store.updateSessionBuffered(session.id, (s) => ({
+      segments: s.segments.map((x) => (x.id === lastSegmentId
+        ? { ...x, text: seg.text, endMs: seg.endMs, updatedAt: new Date().toISOString() }
+        : x)),
+      durationMs: Math.max(s.durationMs, watch.elapsed())
+    }));
+    if (node) node.textContent = seg.text;
+    scrollToBottom();
+    return true;
   }
 
   function segmentRow(segment) {
@@ -320,6 +349,7 @@ export function render(root, { navigate, params }) {
       return;
     }
     for (const s of segs) transcriptList.append(segmentRow(s));
+    lastSegmentId = segs.length ? segs[segs.length - 1].id : null;
     scrollToBottom();
   }
 

@@ -3,11 +3,25 @@
    記録中は自動で再開して「途切れない文字起こし」に見せる。
    提案書 9 章「音声認識が長時間で途切れる」への対策。 */
 
-const SR = globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition || null;
+import { decideCommit } from './lib/transcript.js';
+
+/* 実行時に取り出す。モジュール読み込み時に固定しないことで、
+   テストから差し替えられるようにしている。 */
+function getSR() {
+  return globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition || null;
+}
 
 export function isSpeechSupported() {
-  return Boolean(SR);
+  return Boolean(getSR());
 }
+
+/* Android の Chrome は continuous を実質サポートせず、
+   true にすると「累積した途中結果」を返しながら短い間隔で終了を繰り返す。
+   false にすると発話の切れ目を検出して確定結果を返すため、こちらを使う。 */
+function prefersSingleUtterance() {
+  return /Android/i.test(globalThis.navigator?.userAgent || '');
+}
+
 
 const FATAL_ERRORS = new Set(['not-allowed', 'service-not-allowed', 'audio-capture']);
 
@@ -52,10 +66,11 @@ export class Transcriber {
     this.emptyRuns = 0;          // 結果ゼロのまま即終了した連続回数
     this._runStartedAt = 0;
     this._runGotResult = false;
+    this._lastCommitted = null;  // 直前に積んだ行 { text, startMs, endMs }
   }
 
   start() {
-    if (!SR) {
+    if (!getSR()) {
       this.opts.onError?.('このブラウザは音声認識に対応していません。文字入力で記録できます。', true);
       return false;
     }
@@ -104,11 +119,13 @@ export class Transcriber {
   }
 
   _spawn() {
-    const rec = new SR();
+    const Recognition = getSR();
+    const rec = new Recognition();
     rec.lang = this.opts.lang || 'ja-JP';
-    rec.continuous = true;
+    rec.continuous = !prefersSingleUtterance();
     rec.interimResults = true;
     rec.maxAlternatives = 1;
+    this._lastInterim = '';
 
     rec.onstart = () => {
       this.restartDelay = 250;
@@ -131,7 +148,7 @@ export class Transcriber {
           const startMs = this._utteranceStart ?? this.opts.elapsed();
           this._utteranceStart = null;
           this._lastInterim = '';
-          this.opts.onFinal?.({ text, startMs, endMs: this.opts.elapsed() });
+          this._commit(text, startMs);
         } else {
           if (this._utteranceStart == null) this._utteranceStart = this.opts.elapsed();
           interim += text;
@@ -164,9 +181,10 @@ export class Transcriber {
     rec.onend = () => {
       this._flushInterim();
 
-      // 開始直後に結果ゼロで終わる＝音声が届いていない兆候
+      /* 開始直後に結果ゼロで終わる＝音声が届いていない兆候。
+         ただし一度でも認識できているなら、無音区間で終わるのは正常な動作なので数えない。 */
       const ranBriefly = Date.now() - this._runStartedAt < 1200;
-      if (!this._runGotResult && ranBriefly) this.emptyRuns += 1;
+      if (!this._runGotResult && ranBriefly && !this.gotAnyResult) this.emptyRuns += 1;
 
       if (this.running && this.emptyRuns >= EMPTY_RUN_LIMIT) {
         // 無限に再試行しても直らない。呼び出し側へ判断を委ねる
@@ -212,7 +230,8 @@ export class Transcriber {
     }, delay);
   }
 
-  /** 途中結果が残ったまま切れたときに、取りこぼさず確定扱いで保存する */
+  /** 途中結果が残ったまま切れたときに、取りこぼさず保存する。
+      同じ内容が積み上がらないよう、必ず _commit を通す。 */
   _flushInterim() {
     const text = (this._lastInterim || '').trim();
     this._lastInterim = '';
@@ -223,6 +242,29 @@ export class Transcriber {
     }
     const startMs = this._utteranceStart ?? this.opts.elapsed();
     this._utteranceStart = null;
-    this.opts.onFinal?.({ text, startMs, endMs: this.opts.elapsed(), fromInterim: true });
+    this._commit(text, startMs, true);
+  }
+
+  /* 直前の行を伸ばすのか、新しい行にするのか、捨てるのかを決めて通知する。
+     Android は同じ文を何度も返してくるため、ここを通さないと同じ行が積み上がる。 */
+  _commit(text, startMs, fromInterim = false) {
+    const endMs = this.opts.elapsed();
+    const decision = decideCommit(this._lastCommitted, text, { atMs: startMs });
+    if (decision.action === 'skip') return;
+
+    if (decision.action === 'replace') {
+      this._lastCommitted = { ...this._lastCommitted, text: decision.text, endMs };
+      this.opts.onFinal?.({
+        text: decision.text,
+        startMs: this._lastCommitted.startMs,
+        endMs,
+        fromInterim,
+        replacesLast: true
+      });
+      return;
+    }
+
+    this._lastCommitted = { text: decision.text, startMs, endMs };
+    this.opts.onFinal?.({ text: decision.text, startMs, endMs, fromInterim, replacesLast: false });
   }
 }

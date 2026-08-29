@@ -68,6 +68,11 @@ async function boot() {
   window.addEventListener('hashchange', renderRoute);
   renderRoute();
   registerServiceWorker();
+
+  // 以前の版で積み上がった重複行を直したときだけ知らせる
+  if (store.state.repairedSegments > 0) {
+    toast(`重複していた文字起こし ${store.state.repairedSegments} 行を整理しました`);
+  }
 }
 
 function registerServiceWorker() {
