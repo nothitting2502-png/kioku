@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createSession, createSegment, createNote } from '../js/lib/model.js';
 import {
-  matchesQuery, matchesTags, matchesDateRange,
-  filterSessions, sortSessions, collectTags, searchInSession
+  matchesQuery, matchesTags, haystack,
+  filterSessions, sortByNewest, collectTags, searchInSession
 } from '../js/lib/search.js';
 
 const s1 = createSession({
@@ -41,26 +41,27 @@ test('matchesTags は指定タグをすべて持つものだけ通す', () => {
   assert.equal(matchesTags(s2, ['仕事']), false);
 });
 
-test('matchesDateRange は端の日付を含む', () => {
-  const key = new Date(s2.createdAt);
+test('日付も検索語で辿れる（日付フィルタの代わり）', () => {
+  const d = new Date(s2.createdAt);
   const pad = (n) => String(n).padStart(2, '0');
-  const same = `${key.getFullYear()}-${pad(key.getMonth() + 1)}-${pad(key.getDate())}`;
-  assert.equal(matchesDateRange(s2, same, same), true);
-  assert.equal(matchesDateRange(s2, '2100-01-01', ''), false);
-  assert.equal(matchesDateRange(s2, '', '2000-01-01'), false);
+  const ymd = `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
+  const short = `${d.getMonth() + 1}/${d.getDate()}`;
+  assert.ok(haystack(s2).includes(ymd), 'YYYY/MM/DD で引ける');
+  assert.equal(matchesQuery(s2, ymd), true);
+  assert.equal(matchesQuery(s2, short), true);
+  assert.equal(matchesQuery(s2, '1999/01/01'), false);
 });
 
-test('sortSessions は指定順に並べる', () => {
-  assert.deepEqual(sortSessions(all, 'newest').map((s) => s.id), ['s2', 's3', 's1']);
-  assert.deepEqual(sortSessions(all, 'oldest').map((s) => s.id), ['s1', 's3', 's2']);
-  assert.equal(sortSessions(all, 'notes')[0].id, 's3');
-  assert.equal(sortSessions(all, 'newest') === all, false, '元の配列を壊さない');
+test('sortByNewest は新しい順に並べ、元の配列を壊さない', () => {
+  assert.deepEqual(sortByNewest(all).map((s) => s.id), ['s2', 's3', 's1']);
+  assert.equal(sortByNewest(all) === all, false);
 });
 
-test('filterSessions は検索とタグを組み合わせる', () => {
+test('filterSessions は検索とタグを組み合わせ、新しい順で返す', () => {
   assert.deepEqual(filterSessions(all, { query: '仕事' }).map((s) => s.id), ['s3', 's1']);
   assert.deepEqual(filterSessions(all, { tags: ['読書'] }).map((s) => s.id), ['s2']);
   assert.deepEqual(filterSessions(all, { query: 'アプリ', tags: ['読書'] }), []);
+  assert.deepEqual(filterSessions(all, {}).map((s) => s.id), ['s2', 's3', 's1']);
 });
 
 test('collectTags は出現回数の多い順', () => {

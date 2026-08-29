@@ -1,14 +1,17 @@
-/* 設定は件数が少なく同期的に読みたいので localStorage に置く */
+/* 設定は「本人にしか決められないこと」だけ置く。
+   自動再開・画面の消灯防止・録音と認識の競合回避は、
+   選ばせずにアプリ側が常に面倒を見る。 */
 
 const KEY = 'kioku:settings';
 
 export const DEFAULT_SETTINGS = {
-  lang: 'ja-JP',        // 認識言語
-  saveAudio: true,      // 音声も端末内に保存するか
-  keepAwake: true,      // 記録中に画面を消さない（Wake Lock）
-  autoRestart: true,    // 認識が止まったら自動で再開する
-  retentionDays: 0,     // 0 = 自動削除しない
-  fontScale: 1          // 文字起こしの表示倍率
+  lang: 'ja-JP',   // 認識する言語
+  saveAudio: true, // 音声も端末内に残すか（容量に関わるので本人が決める）
+
+  /* 以下は利用者に見せない。使ってみて分かったことを覚えておく欄。
+     Android では音声認識サービスがマイクを占有するため、
+     録音と文字起こしを同時に使えない端末がある。 */
+  deviceCannotDoBoth: false
 };
 
 export function loadSettings() {
@@ -33,14 +36,7 @@ export function saveSettings(patch) {
 
 export const LANGUAGES = [
   { id: 'ja-JP', label: '日本語' },
-  { id: 'en-US', label: 'English (US)' },
-  { id: 'zh-CN', label: '中文（简体）' },
+  { id: 'en-US', label: 'English' },
+  { id: 'zh-CN', label: '中文' },
   { id: 'ko-KR', label: '한국어' }
-];
-
-export const RETENTIONS = [
-  { id: 0, label: '自動削除しない' },
-  { id: 30, label: '30日で削除' },
-  { id: 90, label: '90日で削除' },
-  { id: 365, label: '1年で削除' }
 ];

@@ -1,13 +1,12 @@
 /* データモデル（DOM 非依存 / テスト対象）
    提案書 5.1「1セッション = 音声・文字起こしセグメント・メモ・タグ・日時」に対応 */
 
-/* 色は和の中間色に寄せ、明るい紙の上でも暗い墨の上でも読める明度にしている */
+/* 種別は3つに絞る。横スクロールなしで並び、迷わず選べる幅。
+   色は和の中間色に寄せ、明るい紙の上でも暗い墨の上でも読める明度にしている。 */
 export const NOTE_TYPES = [
-  { id: 'insight', label: '気づき', color: '#b4893c' },   // 山吹
-  { id: 'todo', label: 'TODO', color: '#b0463b' },        // 朱
-  { id: 'check', label: '確認事項', color: '#3e6480' },    // 藍
-  { id: 'summary', label: '要約', color: '#4f7a5b' },      // 松葉
-  { id: 'quote', label: '引用', color: '#7a6a96' }         // 藤
+  { id: 'insight', label: '気づき', color: '#b4893c' },  // 山吹
+  { id: 'todo', label: 'TODO', color: '#b0463b' },       // 朱
+  { id: 'check', label: '確認', color: '#3e6480' }        // 藍
 ];
 
 export const SESSION_STATUS = {
@@ -49,8 +48,6 @@ export function createSession(overrides = {}) {
   return {
     id: newId('ses'),
     title: '',
-    purpose: '',
-    participants: '',
     tags: [],
     status: 'draft',
     createdAt: now,
@@ -103,8 +100,6 @@ export function displayTitle(session) {
 export function fullText(session) {
   const parts = [
     session.title,
-    session.purpose,
-    session.participants,
     (session.tags || []).join(' '),
     ...(session.segments || []).map((s) => s.text),
     ...(session.notes || []).map((n) => n.text)

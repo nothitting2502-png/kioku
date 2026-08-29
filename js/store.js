@@ -27,7 +27,6 @@ function emit() {
 export async function init() {
   try {
     state.sessions = await db.getAllSessions();
-    await applyRetention();
     state.ready = true;
   } catch (err) {
     state.error = err.message;
@@ -147,20 +146,6 @@ export async function importBackup(raw) {
   state.sessions = await db.getAllSessions();
   emit();
   return { ok: true, added: incoming.length };
-}
-
-/** 保存期間の設定に従って古いセッションを削除する */
-export async function applyRetention() {
-  const days = Number(state.settings.retentionDays) || 0;
-  if (!days) return 0;
-  const limit = Date.now() - days * 24 * 60 * 60 * 1000;
-  const stale = state.sessions.filter((s) => new Date(s.createdAt).getTime() < limit);
-  for (const s of stale) await db.deleteSession(s.id);
-  if (stale.length) {
-    state.sessions = state.sessions.filter((s) => !stale.includes(s));
-    emit();
-  }
-  return stale.length;
 }
 
 export { estimateUsage } from './db.js';

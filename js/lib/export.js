@@ -31,8 +31,6 @@ export function toMarkdown(session) {
   out.push(`# ${displayTitle(session)}`, '');
   out.push('| 項目 | 内容 |', '| --- | --- |');
   out.push(`| 日時 | ${formatDateTime(session.createdAt)} |`);
-  out.push(`| 用途 | ${session.purpose || '—'} |`);
-  out.push(`| 参加者 | ${session.participants || '—'} |`);
   out.push(`| タグ | ${(session.tags || []).map((t) => `#${t}`).join(' ') || '—'} |`);
   out.push(`| 収録時間 | ${formatElapsed(session.durationMs)} |`);
   out.push('');

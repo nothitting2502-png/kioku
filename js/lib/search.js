@@ -1,21 +1,24 @@
-/* 検索・絞り込み・並び替え（DOM 非依存 / テスト対象）
-   提案書 3.2「全文検索、タグ・日付フィルタ、並び替え」に対応 */
+/* 検索・絞り込み（DOM 非依存 / テスト対象）
+   並び替えや日付フィルタの操作は置かず、
+   「新しい順に並べ、言葉で絞る」の一手だけにしている。
+   日付は検索対象に含めてあるので、「2026/08」や「8/29」でも辿り着ける。 */
 
-import { fullText, displayTitle } from './model.js';
-import { toLocalDateKey } from './time.js';
+import { fullText } from './model.js';
+import { formatDateTime, toLocalDateKey } from './time.js';
 
-export const SORT_OPTIONS = [
-  { id: 'newest', label: '新しい順' },
-  { id: 'oldest', label: '古い順' },
-  { id: 'title', label: 'タイトル順' },
-  { id: 'notes', label: 'メモが多い順' }
-];
+/** 検索対象の文字列。本文・メモ・タグに加えて日付表記も含める */
+export function haystack(session) {
+  const date = formatDateTime(session.createdAt);     // 2026/08/29 20:21
+  const key = toLocalDateKey(session.createdAt);      // 2026-08-29
+  const short = date ? date.slice(5, 10).replace(/^0/, '') : ''; // 8/29
+  return [fullText(session), date, key, short].filter(Boolean).join('\n').toLowerCase();
+}
 
 /** 空白区切りの語をすべて含む（AND 検索・大文字小文字を無視） */
 export function matchesQuery(session, query) {
   const q = String(query || '').trim();
   if (!q) return true;
-  const hay = fullText(session).toLowerCase();
+  const hay = haystack(session);
   return q
     .toLowerCase()
     .split(/\s+/)
@@ -30,39 +33,20 @@ export function matchesTags(session, tags) {
   return want.every((t) => have.includes(String(t).toLowerCase()));
 }
 
-export function matchesDateRange(session, from, to) {
-  const key = toLocalDateKey(session.createdAt);
-  if (from && key < from) return false;
-  if (to && key > to) return false;
-  return true;
-}
-
-export function sortSessions(sessions, sortId = 'newest') {
-  const list = sessions.slice();
-  switch (sortId) {
-    case 'oldest':
-      return list.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
-    case 'title':
-      return list.sort((a, b) => displayTitle(a).localeCompare(displayTitle(b), 'ja'));
-    case 'notes':
-      return list.sort((a, b) => (b.notes?.length || 0) - (a.notes?.length || 0));
-    case 'newest':
-    default:
-      return list.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-  }
+/** 常に新しい順。元の配列は壊さない */
+export function sortByNewest(sessions) {
+  return sessions.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
 /**
- * ダッシュボードの絞り込み一式。
+ * ダッシュボードの絞り込み。
  * @param {Array} sessions
- * @param {{query?:string, tags?:string[], from?:string, to?:string, sort?:string}} filter
+ * @param {{query?:string, tags?:string[]}} filter
  */
 export function filterSessions(sessions, filter = {}) {
-  const { query = '', tags = [], from = '', to = '', sort = 'newest' } = filter;
-  const hit = (sessions || []).filter(
-    (s) => matchesQuery(s, query) && matchesTags(s, tags) && matchesDateRange(s, from, to)
-  );
-  return sortSessions(hit, sort);
+  const { query = '', tags = [] } = filter;
+  const hit = (sessions || []).filter((s) => matchesQuery(s, query) && matchesTags(s, tags));
+  return sortByNewest(hit);
 }
 
 /** 全セッションから使用中タグを出現回数つきで集計する */

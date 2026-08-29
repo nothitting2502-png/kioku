@@ -11,6 +11,11 @@ export function isSpeechSupported() {
 
 const FATAL_ERRORS = new Set(['not-allowed', 'service-not-allowed', 'audio-capture']);
 
+/** 結果ゼロで即終了が続いたら、再試行をやめて呼び出し側へ知らせる回数 */
+const EMPTY_RUN_LIMIT = 3;
+/** start() の例外を許容する回数 */
+const START_FAILURE_LIMIT = 3;
+
 const ERROR_MESSAGES = {
   'not-allowed': 'マイクの使用が許可されていません。ブラウザの設定で許可してください。',
   'service-not-allowed': '音声認識サービスを利用できません。ブラウザの設定を確認してください。',
@@ -38,6 +43,15 @@ export class Transcriber {
     this.restartDelay = 250;
     this._utteranceStart = null;
     this._restartTimer = null;
+
+    /* 診断用。Android では「開始したのに何も返らず終わる」ことがあるため、
+       黙って再試行し続けず、状況を数えて表に出す。 */
+    this.gotAnyResult = false;   // このセッションで一度でも結果が来たか
+    this.lastError = null;       // 最後のエラーコード
+    this.startFailures = 0;      // start() が例外を投げた回数
+    this.emptyRuns = 0;          // 結果ゼロのまま即終了した連続回数
+    this._runStartedAt = 0;
+    this._runGotResult = false;
   }
 
   start() {
@@ -47,6 +61,10 @@ export class Transcriber {
     }
     this.running = true;
     this.stopping = false;
+    this.gotAnyResult = false;
+    this.lastError = null;
+    this.startFailures = 0;
+    this.emptyRuns = 0;
     this._spawn();
     return true;
   }
@@ -66,6 +84,17 @@ export class Transcriber {
     this.opts.onStatus?.('stopped');
   }
 
+  /** 設定画面や診断で使う現在の状態 */
+  get diagnostics() {
+    return {
+      running: this.running,
+      gotAnyResult: this.gotAnyResult,
+      lastError: this.lastError,
+      startFailures: this.startFailures,
+      emptyRuns: this.emptyRuns
+    };
+  }
+
   setLang(lang) {
     this.opts.lang = lang;
     if (this.running) {
@@ -83,10 +112,16 @@ export class Transcriber {
 
     rec.onstart = () => {
       this.restartDelay = 250;
+      this.startFailures = 0;
+      this._runStartedAt = Date.now();
+      this._runGotResult = false;
       this.opts.onStatus?.('listening');
     };
 
     rec.onresult = (event) => {
+      this._runGotResult = true;
+      this.gotAnyResult = true;
+      this.emptyRuns = 0;
       let interim = '';
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
         const result = event.results[i];
@@ -109,9 +144,12 @@ export class Transcriber {
     rec.onerror = (event) => {
       const code = event.error || 'unknown';
       if (code === 'aborted' && this.stopping) return;
+      this.lastError = code;
       const fatal = FATAL_ERRORS.has(code);
       if (fatal) {
         this.running = false;
+        // まだ一度も認識できていない場合は、マイクの取り合いが原因のことが多い
+        this.opts.onBlocked?.({ code, neverWorked: !this.gotAnyResult });
         this.opts.onError?.(ERROR_MESSAGES[code] || `認識エラー: ${code}`, true);
         return;
       }
@@ -125,6 +163,19 @@ export class Transcriber {
 
     rec.onend = () => {
       this._flushInterim();
+
+      // 開始直後に結果ゼロで終わる＝音声が届いていない兆候
+      const ranBriefly = Date.now() - this._runStartedAt < 1200;
+      if (!this._runGotResult && ranBriefly) this.emptyRuns += 1;
+
+      if (this.running && this.emptyRuns >= EMPTY_RUN_LIMIT) {
+        // 無限に再試行しても直らない。呼び出し側へ判断を委ねる
+        this.running = false;
+        this.opts.onStatus?.('stopped');
+        this.opts.onBlocked?.({ code: 'no-audio', neverWorked: !this.gotAnyResult });
+        return;
+      }
+
       if (this.running && this.opts.autoRestart !== false) {
         this.opts.onStatus?.('reconnecting');
         this._restart(this.restartDelay);
@@ -137,8 +188,18 @@ export class Transcriber {
     this.recognition = rec;
     try {
       rec.start();
-    } catch {
-      // 直前のインスタンスがまだ終了していない場合は少し待って再試行
+    } catch (err) {
+      // 直前のインスタンスがまだ終了していない場合は少し待てば直る。
+      // ただし何度も失敗するなら黙って回り続けず、エラーとして表に出す。
+      this.startFailures += 1;
+      this.lastError = `start-failed: ${err?.message || err}`;
+      if (this.startFailures >= START_FAILURE_LIMIT) {
+        this.running = false;
+        this.opts.onStatus?.('stopped');
+        this.opts.onBlocked?.({ code: 'start-failed', neverWorked: !this.gotAnyResult });
+        this.opts.onError?.('音声認識を開始できませんでした。マイクが他の機能に使われている可能性があります。', true);
+        return;
+      }
       this._restart(400);
     }
   }

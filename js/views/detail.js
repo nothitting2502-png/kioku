@@ -4,7 +4,7 @@ import { el, clear, toast, confirmDialog, promptDialog, downloadFile, shareText,
 import * as store from '../store.js';
 import { displayTitle, sessionStats, parseTags, noteTypeOf, NOTE_TYPES, segmentAt } from '../lib/model.js';
 import { formatDateTime, formatElapsed, fileStamp } from '../lib/time.js';
-import { toText, toMarkdown, toCsv, toBackup, safeFileName } from '../lib/export.js';
+import { toText, toMarkdown, toCsv, safeFileName } from '../lib/export.js';
 import { searchInSession } from '../lib/search.js';
 
 export function render(root, { navigate, params }) {
@@ -20,10 +20,17 @@ export function render(root, { navigate, params }) {
 
   const view = el('section', { class: 'view view--detail' });
 
+  /* タイトルとタグは「編集」を開かず、その場で直せる */
+  const titleInput = el('input', {
+    class: 'record-title', type: 'text', value: session.title,
+    placeholder: 'タイトルを入力', 'aria-label': 'タイトル',
+    onChange: (e) => store.updateSession(session.id, { title: e.target.value.trim() })
+  });
+
   view.append(el('header', { class: 'record-head' }, [
     el('button', { class: 'btn btn--icon', type: 'button', 'aria-label': '戻る', onClick: () => navigate('#/') }, '←'),
-    el('h1', { class: 'detail-title', text: displayTitle(session) }),
-    el('button', { class: 'btn btn--icon btn--rec-dot', type: 'button', 'aria-label': '記録を続ける', title: '記録を続ける', onClick: () => navigate(`#/record/${session.id}`) }, '●')
+    titleInput,
+    el('button', { class: 'btn btn--icon btn--rec-dot', type: 'button', 'aria-label': '録音を続ける', title: '録音を続ける', onClick: () => navigate(`#/record/${session.id}`) }, '●')
   ]));
 
   view.append(el('p', { class: 'detail-meta', text:
@@ -33,41 +40,22 @@ export function render(root, { navigate, params }) {
   const audioHost = el('div', { class: 'audio-host' });
   view.append(audioHost);
 
-  /* --- メタ情報の編集 --- */
-  const titleInput = el('input', { class: 'input', type: 'text', value: session.title, placeholder: 'タイトル' });
-  const purposeInput = el('input', { class: 'input', type: 'text', value: session.purpose || '', placeholder: '用途' });
-  const participantsInput = el('input', { class: 'input', type: 'text', value: session.participants || '', placeholder: '参加者' });
-  const tagsInput = el('input', { class: 'input', type: 'text', value: (session.tags || []).join(' '), placeholder: 'タグ（スペース区切り）' });
-
-  view.append(el('details', { class: 'filters' }, [
-    el('summary', { class: 'filters__summary', text: 'セッション情報を編集' }),
-    el('div', { class: 'filters__body' }, [
-      el('label', { class: 'field' }, [el('span', { class: 'field__label', text: 'タイトル' }), titleInput]),
-      el('label', { class: 'field' }, [el('span', { class: 'field__label', text: '用途' }), purposeInput]),
-      el('label', { class: 'field' }, [el('span', { class: 'field__label', text: '参加者' }), participantsInput]),
-      el('label', { class: 'field' }, [el('span', { class: 'field__label', text: 'タグ' }), tagsInput]),
-      el('button', {
-        class: 'btn btn--primary btn--sm', type: 'button',
-        onClick: async () => {
-          await store.updateSession(session.id, {
-            title: titleInput.value.trim(),
-            purpose: purposeInput.value.trim(),
-            participants: participantsInput.value.trim(),
-            tags: parseTags(tagsInput.value)
-          });
-          toast('保存しました');
-          navigate(`#/session/${session.id}`, { replace: true, force: true });
-        }
-      }, '保存する')
-    ])
-  ]));
+  /* --- タグ --- */
+  view.append(el('input', {
+    class: 'input input--tags', type: 'text', value: (session.tags || []).join(' '),
+    placeholder: 'タグ（スペース区切り）', 'aria-label': 'タグ',
+    onChange: async (e) => {
+      await store.updateSession(session.id, { tags: parseTags(e.target.value) });
+      toast('保存しました');
+    }
+  }));
 
   /* --- セッション内検索 --- */
   const searchInput = el('input', {
     class: 'input input--search', type: 'search', placeholder: 'このセッション内を検索',
     onInput: (e) => { query = e.target.value; renderBody(); }
   });
-  view.append(el('div', { class: 'toolbar' }, [searchInput]));
+  view.append(searchInput);
 
   const hitInfo = el('p', { class: 'list-summary' });
   const transcriptHost = el('div', { class: 'panel panel--flat' });
@@ -78,15 +66,13 @@ export function render(root, { navigate, params }) {
   view.append(el('div', { class: 'export-bar' }, [
     el('h2', { class: 'panel__title', text: '書き出し・共有' }),
     el('div', { class: 'export-buttons' }, [
-      exportButton('テキスト', () => download('txt', toText(current()), 'text/plain;charset=utf-8')),
-      exportButton('Markdown', () => download('md', toMarkdown(current()), 'text/markdown;charset=utf-8')),
-      exportButton('CSV', () => download('csv', '﻿' + toCsv(current()), 'text/csv;charset=utf-8')),
-      exportButton('JSON', () => download('json', JSON.stringify(toBackup(current()), null, 2), 'application/json')),
-      exportButton('音声', downloadAudio),
       exportButton('共有', async () => {
         const ok = await shareText(displayTitle(current()), toText(current()));
         if (!ok) toast('この環境では共有シートを開けませんでした', 'error');
-      })
+      }),
+      exportButton('テキスト', () => download('txt', toText(current()), 'text/plain;charset=utf-8')),
+      exportButton('Markdown', () => download('md', toMarkdown(current()), 'text/markdown;charset=utf-8')),
+      exportButton('CSV', () => download('csv', '﻿' + toCsv(current()), 'text/csv;charset=utf-8'))
     ]),
     el('button', {
       class: 'btn btn--ghost btn--danger-text btn--block', type: 'button',
@@ -138,7 +124,10 @@ export function render(root, { navigate, params }) {
     audioEl = el('audio', { class: 'audio', controls: true, src: audioUrl, preload: 'metadata' });
     audioHost.append(
       audioEl,
-      el('p', { class: 'audio-meta', text: `音声 ${bytes(meta.size)}・${meta.mimeType}・行をタップするとその位置から再生します` })
+      el('div', { class: 'audio-meta' }, [
+        el('span', { text: `音声 ${bytes(meta.size)}・時刻をタップするとその位置から再生します` }),
+        el('button', { class: 'btn btn--sm btn--ghost', type: 'button', onClick: downloadAudio }, '音声を保存')
+      ])
     );
   }
 

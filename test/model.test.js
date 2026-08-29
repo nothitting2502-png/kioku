@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createSession, createSegment, createNote, parseTags,
-  displayTitle, fullText, segmentAt, sessionStats, noteTypeOf, newId
+  displayTitle, fullText, segmentAt, sessionStats, noteTypeOf, newId, NOTE_TYPES
 } from '../js/lib/model.js';
 
 test('parseTags は区切り文字を吸収して重複を除く', () => {
@@ -43,6 +43,11 @@ test('createNote は種別の色を引き継ぐ', () => {
   const note = createNote({ type: 'todo', text: 'あとで確認', atMs: 500 });
   assert.equal(note.color, noteTypeOf('todo').color);
   assert.equal(note.segmentId, null);
+});
+
+test('メモの種別は3つに絞ってある', () => {
+  assert.equal(NOTE_TYPES.length, 3);
+  assert.deepEqual(NOTE_TYPES.map((t) => t.id), ['insight', 'todo', 'check']);
 });
 
 test('fullText はタイトル・タグ・本文・メモを含む', () => {

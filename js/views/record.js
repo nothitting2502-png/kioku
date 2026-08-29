@@ -8,6 +8,9 @@ import { Stopwatch } from '../lib/stopwatch.js';
 import { createSegment, createNote, displayTitle, NOTE_TYPES, noteTypeOf, segmentAt } from '../lib/model.js';
 import { formatElapsed } from '../lib/time.js';
 
+/** 認識を開始してから、これだけ経っても結果が無ければ手が打てる案内に切り替える */
+const WATCHDOG_MS = 9000;
+
 export function render(root, { navigate, params }) {
   const session = store.getSession(params.id);
   if (!session) {
@@ -29,6 +32,8 @@ export function render(root, { navigate, params }) {
   let timerHandle = null;
   let audioStarted = false;
   let panel = 'transcript'; // モバイルで表示する側
+  let blockedHandled = false;   // マイク競合の案内を出したか
+  let watchdogHandle = null;    // 「開始したのに何も出ない」の見張り
 
   watch.reset();
   if (session.durationMs) watch._accumulated = session.durationMs;
@@ -51,8 +56,7 @@ export function render(root, { navigate, params }) {
   const transcriptList = el('div', { class: 'transcript', tabindex: '0' });
   const interimLine = el('p', { class: 'interim', 'aria-live': 'polite' });
   const transcriptPanel = el('div', { class: 'panel panel--transcript' }, [
-    el('div', { class: 'panel__head' }, [
-      el('h2', { class: 'panel__title', text: '文字起こし' }),
+    el('div', { class: 'panel__head panel__head--end' }, [
       el('button', {
         class: 'btn btn--sm btn--ghost', type: 'button',
         onClick: addManualSegment
@@ -76,10 +80,6 @@ export function render(root, { navigate, params }) {
   const typeChips = el('div', { class: 'type-chips' });
   const noteList = el('div', { class: 'note-list' });
   const notePanel = el('div', { class: 'panel panel--notes' }, [
-    el('div', { class: 'panel__head' }, [
-      el('h2', { class: 'panel__title', text: 'メモ' }),
-      el('span', { class: 'panel__hint', text: 'タップで該当箇所へ' })
-    ]),
     el('div', { class: 'note-compose' }, [
       typeChips,
       noteInput,
@@ -100,8 +100,7 @@ export function render(root, { navigate, params }) {
   const view = el('section', { class: 'view view--record' }, [
     el('header', { class: 'record-head' }, [
       el('button', { class: 'btn btn--icon', type: 'button', 'aria-label': '戻る', onClick: leave }, '←'),
-      titleInput,
-      el('button', { class: 'btn btn--icon', type: 'button', 'aria-label': '詳細', onClick: () => navigate(`#/session/${session.id}`) }, '☰')
+      titleInput
     ]),
     el('div', { class: 'record-status' }, [stateDot, stateText, timerEl]),
     bannerHost,
@@ -114,7 +113,7 @@ export function render(root, { navigate, params }) {
   /* ---------- 認識エンジン ---------- */
   const transcriber = new Transcriber({
     lang: settings.lang,
-    autoRestart: settings.autoRestart,
+    autoRestart: true,   // 途切れたら必ず自分で戻る
     elapsed: () => watch.elapsed(),
     onInterim: (text) => {
       interimText = text;
@@ -136,14 +135,75 @@ export function render(root, { navigate, params }) {
       paintState(detail);
     },
     onError: (message, fatal) => {
+      // マイクの取り合いは onBlocked 側で案内するので、二重にバナーを出さない
+      if (blockedHandled) return;
       showBanner(message, fatal ? 'error' : 'warn');
       if (fatal && mode === 'recording') {
         // 認識が使えなくても録音と文字入力は続けられる
         recognitionState = 'unavailable';
         paintState();
       }
-    }
+    },
+    onBlocked: (info) => { handleBlocked(info); }
   });
+
+  /* ---------- 認識が音声を取れないときの回復 ----------
+     Android では音声認識サービスがマイクを占有するため、
+     MediaRecorder が先にマイクを掴んでいると認識が何も返さずに終わる。
+     録音を手放してマイクを空け、利用者のタップで認識を開始し直す。 */
+  async function handleBlocked(info) {
+    if (blockedHandled) return;
+    blockedHandled = true;
+    recognitionState = 'unavailable';
+    paintState();
+
+    if (audioStarted) {
+      // ここまでの音声は失わずに保存してから、マイクを解放する
+      let saved = false;
+      try {
+        const blob = await recorder.stop();
+        if (blob && blob.size > 0) { await store.saveAudio(session.id, blob); saved = true; }
+      } catch {
+        /* 保存できなくても認識の回復を優先する */
+      }
+      audioStarted = false;
+      store.updateSettings({ deviceCannotDoBoth: true });
+
+      showBanner(
+        `この端末では録音と文字起こしを同時に使えないようです。${saved ? 'ここまでの音声は保存しました。' : ''}録音を止めてマイクを空けたので、下のボタンで文字起こしを始められます。`,
+        'warn',
+        { label: '文字起こしを開始', onClick: () => { blockedHandled = false; retryRecognition(); } }
+      );
+      return;
+    }
+
+    showBanner(blockedMessage(info?.code), 'error',
+      { label: 'もう一度試す', onClick: () => { blockedHandled = false; retryRecognition(); } });
+  }
+
+  function blockedMessage(code) {
+    switch (code) {
+      case 'not-allowed':
+      case 'service-not-allowed':
+        return 'マイクの使用が許可されていません。アドレスバーの鍵アイコンからマイクを許可して、もう一度お試しください。';
+      case 'audio-capture':
+      case 'no-audio':
+      case 'no-result':
+        return '音声を取り込めませんでした。他のアプリがマイクを使っていないか確認してください。「＋ 文章を追加」で手入力もできます。';
+      case 'start-failed':
+        return '音声認識を開始できませんでした。ページを開き直してからもう一度お試しください。';
+      default:
+        return `音声を取り込めませんでした（${code || '原因不明'}）。マイクの許可と通信状態を確認してください。`;
+    }
+  }
+
+  /** バナーのボタンから呼ぶ。タップ直後なので start() が許可される */
+  function retryRecognition() {
+    if (!isSpeechSupported()) return;
+    transcriber.start();
+    startWatchdog();
+    paintState();
+  }
 
   /* ---------- 描画 ---------- */
   function paintState(detail) {
@@ -164,11 +224,20 @@ export function render(root, { navigate, params }) {
     view.classList.toggle('is-recording', mode === 'recording');
   }
 
-  function showBanner(message, kind = 'warn') {
+  /** @param {{label:string, onClick:Function}} [action] バナー内に置く操作ボタン */
+  function showBanner(message, kind = 'warn', action = null) {
     clear(bannerHost);
     if (!message) { banner = null; return; }
     banner = el('div', { class: `banner banner--${kind}` }, [
-      el('span', { text: message }),
+      el('div', { class: 'banner__body' }, [
+        el('span', { text: message }),
+        action
+          ? el('button', {
+              class: 'btn btn--sm banner__action', type: 'button',
+              onClick: () => { clear(bannerHost); action.onClick(); }
+            }, action.label)
+          : null
+      ]),
       el('button', { class: 'banner__close', type: 'button', 'aria-label': '閉じる', onClick: () => clear(bannerHost) }, '×')
     ]);
     bannerHost.append(banner);
@@ -360,46 +429,90 @@ export function render(root, { navigate, params }) {
     renderTranscript();
   }
 
-  async function onPrimary() {
+  /* タップのハンドラは同期で始める。
+     Android の SpeechRecognition.start() はユーザー操作の直後でないと拒否されるため、
+     await（DB書き込みやマイク許可）を挟む前に認識を起動する。 */
+  function onPrimary() {
     if (mode === 'recording') return;
-    if (mode === 'paused') { await resume(); return; }
-    await begin();
+    startRecognitionNow();
+    if (mode === 'paused') resume();
+    else begin();
+  }
+
+  function startRecognitionNow() {
+    blockedHandled = false;
+    if (!isSpeechSupported()) {
+      showBanner('このブラウザは音声認識に対応していません。Android では Chrome をお使いください。「＋ 文章を追加」で手入力できます。', 'warn');
+      recognitionState = 'unavailable';
+      return;
+    }
+    transcriber.start();
+    startWatchdog();
+  }
+
+  /* 認識が「開始した」と言うのに何も返さない端末があるため、
+     一定時間ぶんの空振りを検知して、手が打てる案内に切り替える。 */
+  function startWatchdog() {
+    clearTimeout(watchdogHandle);
+    watchdogHandle = setTimeout(() => {
+      if (mode !== 'recording') return;
+      if (transcriber.gotAnyResult) return;
+      handleBlocked({ code: 'no-result', neverWorked: true });
+    }, WATCHDOG_MS);
+  }
+
+  function stopWatchdog() {
+    clearTimeout(watchdogHandle);
+    watchdogHandle = null;
   }
 
   async function begin() {
-    showBanner('');
     watch.start();
     mode = 'recording';
-    await store.updateSession(session.id, { status: 'recording', startedAt: session.startedAt || new Date().toISOString() });
-
-    if (store.state.settings.saveAudio && isRecorderSupported()) {
-      try {
-        await recorder.start();
-        audioStarted = true;
-      } catch (err) {
-        showBanner(`録音を開始できませんでした（${err.message}）。文字起こしのみ続行します。`, 'warn');
-      }
-    } else if (store.state.settings.saveAudio) {
-      showBanner('このブラウザは録音の保存に対応していません。文字起こしのみ記録します。', 'warn');
-    }
-
-    if (isSpeechSupported()) transcriber.start();
-    else showBanner('このブラウザは音声認識に対応していません。Android では Chrome をお使いください。「文章を追加」で手入力できます。', 'warn');
-
-    if (store.state.settings.keepAwake) await screenLock.acquire();
     startTimer();
     updateControls();
     paintState();
+
+    await store.updateSession(session.id, { status: 'recording', startedAt: session.startedAt || new Date().toISOString() });
+    await startRecorderIfPossible();
+    await screenLock.acquire();
+    paintState();
+  }
+
+  /** 録音は「あると便利」な機能。失敗しても文字起こしは続ける */
+  async function startRecorderIfPossible() {
+    const settings = store.state.settings;
+    if (!settings.saveAudio) return;
+
+    if (settings.deviceCannotDoBoth) {
+      // 以前この端末で競合が起きているので、最初から録音しない
+      if (!blockedHandled) showBanner('この端末は録音と文字起こしを同時に使えないため、文字起こしのみ記録します。設定から戻せます。', 'warn');
+      return;
+    }
+    if (!isRecorderSupported()) {
+      if (!blockedHandled) showBanner('このブラウザは録音の保存に対応していません。文字起こしのみ記録します。', 'warn');
+      return;
+    }
+    try {
+      await recorder.start();
+      audioStarted = true;
+    } catch (err) {
+      // 認識側で既に原因を案内しているなら、同じ話を上書きしない
+      if (blockedHandled) return;
+      showBanner(`録音を開始できませんでした（${err.message}）。文字起こしのみ続行します。`, 'warn');
+    }
   }
 
   async function resume() {
     watch.start();
     mode = 'recording';
-    if (audioStarted) recorder.resume();
-    if (isSpeechSupported()) transcriber.start();
-    if (store.state.settings.keepAwake) await screenLock.acquire();
     startTimer();
     updateControls();
+    paintState();
+
+    if (audioStarted) recorder.resume();
+    else await startRecorderIfPossible();
+    await screenLock.acquire();
     paintState();
   }
 
@@ -408,6 +521,7 @@ export function render(root, { navigate, params }) {
     watch.pause();
     mode = 'paused';
     transcriber.stop();
+    stopWatchdog();
     if (audioStarted) recorder.pause();
     stopTimer();
     await store.updateSession(session.id, { durationMs: watch.elapsed() });
@@ -422,6 +536,7 @@ export function render(root, { navigate, params }) {
     watch.pause();
     mode = 'idle';
     transcriber.stop();
+    stopWatchdog();
     stopTimer();
     await screenLock.release();
     await store.flushSaves();
@@ -440,9 +555,26 @@ export function render(root, { navigate, params }) {
       audioStarted = false;
     }
 
+    if (isEmpty()) {
+      await store.removeSession(session.id);
+      toast('記録がなかったので保存しませんでした');
+      navigate('#/');
+      return;
+    }
+
     await store.updateSession(session.id, { status: 'done', durationMs: watch.elapsed() });
-    toast(`セッションを保存しました${audioNote}`);
+    toast(`保存しました${audioNote}`);
     navigate(`#/session/${session.id}`);
+  }
+
+  /** 何も記録せずに離れたセッションは一覧に残さない */
+  function isEmpty() {
+    const s = store.getSession(session.id);
+    if (!s) return false;
+    return (s.segments || []).length === 0
+      && (s.notes || []).length === 0
+      && !String(s.title || '').trim()
+      && !s.audio;
   }
 
   async function leave() {
@@ -455,6 +587,7 @@ export function render(root, { navigate, params }) {
       if (!ok) return;
       watch.pause();
       transcriber.stop();
+      stopWatchdog();
       stopTimer();
       await screenLock.release();
       if (audioStarted) {
@@ -465,6 +598,7 @@ export function render(root, { navigate, params }) {
       await store.updateSession(session.id, { status: 'draft', durationMs: watch.elapsed() });
       await store.flushSaves();
     }
+    if (isEmpty()) await store.removeSession(session.id);
     navigate('#/');
   }
 
@@ -488,12 +622,11 @@ export function render(root, { navigate, params }) {
     timerEl.textContent = formatElapsed(watch.elapsed());
   }
 
+  /* 画面へ戻ってきたら、外れていた画面ロックを取り直すだけにする。
+     「認識が止まるかも」といった予告は出さない（状態表示に出る）。 */
   const onVisibility = () => {
     if (document.visibilityState === 'visible') {
       screenLock.reacquireIfNeeded(mode === 'recording');
-    } else if (mode === 'recording') {
-      // Android では画面を離れると認識が止まることがある
-      showBanner('画面を離れている間は認識が止まることがあります。戻ったら状態を確認してください。', 'warn');
     }
   };
   document.addEventListener('visibilitychange', onVisibility);
@@ -519,9 +652,11 @@ export function render(root, { navigate, params }) {
     document.removeEventListener('visibilitychange', onVisibility);
     window.removeEventListener('beforeunload', onBeforeUnload);
     transcriber.stop();
+    stopWatchdog();
     stopTimer();
     screenLock.release();
     if (audioStarted) recorder.stop().catch(() => {});
     store.flushSaves();
+    if (isEmpty()) store.removeSession(session.id);
   };
 }
