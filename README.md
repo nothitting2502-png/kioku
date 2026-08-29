@@ -5,6 +5,8 @@
 提案書『リアルタイム文字起こし・複数メモ管理アプリ』のMVPを、**Androidのブラウザ（Chrome）で動くPWA**として実装したものです。
 インストール不要で開けて、ホーム画面に追加すればアプリのように使えます。記録データは端末内だけに保存されます。
 
+**▶ 公開URL: https://nothitting2502-png.github.io/kioku/**
+
 <p>
   <img src="icons/icon-192.png" width="72" alt="Kioku のアイコン" />
 </p>
@@ -101,16 +103,36 @@ python3 tools/make_icons.py
 
 ### 公開（GitHub Pages）
 
-`.github/workflows/deploy-pages.yml` が `main` への push で自動デプロイします。
+**すでに公開済みです → https://nothitting2502-png.github.io/kioku/**
 
-1. リポジトリの **Settings → Pages → Build and deployment → Source** を「**GitHub Actions**」に設定
-2. `main` に push すると、`https://<ユーザー名>.github.io/<リポジトリ名>/` で公開されます
+Pages は `main` ブランチのルートから配信する設定になっているため、
+**`main` に push すれば1分ほどで反映されます。** 追加の操作は要りません。
 
-> **Privateリポジトリで Pages を使うには GitHub Pro / Team 以上のプランが必要です。**
-> 無料プランのままにする場合は、次のいずれかを選びます。
-> - リポジトリはPrivateのまま、公開用に別のホスティング（Cloudflare Pages / Netlify / Vercel の無料枠）へデプロイする
-> - 自宅のPCでサーバーを立て、同じWi-Fi内のスマホから開く（この場合はhttpsでないためマイクが使えません）
-> - リポジトリをPublicにする（**記録データはリポジトリに入らないため、公開してもデータ漏えいにはなりません**）
+```bash
+git add -A && git commit -m "..." && git push
+```
+
+公開されるのはソースコードだけです。録音・文字起こし・メモは端末のブラウザ内にしか保存されないため、
+リポジトリがPublicでも記録が他人に見えることはありません。
+非公開にしたい場合は、リポジトリをPrivateへ切り替えたうえで、GitHub Pro に加入するか、
+Cloudflare Pages / Netlify / Vercel の無料枠へデプロイしてください。
+
+### CIワークフローを有効にする（任意）
+
+`.github/workflows/ci.yml` を用意していますが、GitHub CLI のトークンに `workflow` スコープが無いため
+まだ push していません。有効にするには、一度だけ次を実行してください。
+
+```bash
+gh auth refresh -h github.com -s workflow
+```
+
+そのうえで、
+
+```bash
+git add .github && git commit -m "CI ワークフローを追加" && git push
+```
+
+CIは、ユニットテスト・全JSの構文チェック・**音声や秘密情報がコミットされていないかの検査**・PWA必須ファイルの確認を行います。
 
 ---
 

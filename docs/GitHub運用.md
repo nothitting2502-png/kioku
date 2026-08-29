@@ -13,19 +13,26 @@
 1. `.gitignore` … `*.webm` `*.m4a` `*.wav` `*-backup.json` `.env` `*.keystore` などを除外
 2. CI … コミットされたファイル一覧を検査し、音声・秘密情報らしきものがあれば**ビルドを失敗させる**
 
-## リポジトリの初期設定
+## 現在の構成
+
+| 項目 | 値 |
+| --- | --- |
+| リポジトリ | https://github.com/nothitting2502-png/kioku （Public） |
+| 公開URL | https://nothitting2502-png.github.io/kioku/ |
+| Pages のソース | `main` ブランチのルート（`main` に push すれば自動で反映） |
+
+**Publicにしている理由**: GitHub Pages を無料プランで使うため。
+このアプリはサーバーを持たず、記録はすべて端末のブラウザ内（IndexedDB）にあるため、
+ソースが公開されても記録が他人に見えることはありません。
+
+非公開にしたい場合は、Privateへ切り替えたうえで GitHub Pro に加入するか、
+Cloudflare Pages / Netlify / Vercel の無料枠へデプロイしてください。
 
 ```bash
-gh repo create kioku --private --source . --remote origin --push
+gh repo edit nothitting2502-png/kioku --visibility private
 ```
 
-作成後、GitHubの Settings で以下を設定します。
-
-| 設定 | 値 |
-| --- | --- |
-| Visibility | Private |
-| Pages → Source | GitHub Actions（公開する場合） |
-| Branch protection（任意） | `main` への直接pushを禁止し、PR必須にする |
+（任意）`main` への直接pushを禁止し、PR必須にする Branch protection も設定できます。
 
 ## ブランチ運用
 
@@ -46,7 +53,19 @@ gh pr create --fill
 | ファイル | 実行タイミング | 内容 |
 | --- | --- | --- |
 | `.github/workflows/ci.yml` | push / PR | ユニットテスト、全JSの構文チェック、個人データ・秘密情報の混入検査、PWA必須ファイルの存在確認 |
-| `.github/workflows/deploy-pages.yml` | `main` への push | 静的ファイルを GitHub Pages へデプロイ |
+
+デプロイ用のワークフローは置いていません。Pages が `main` のルートを直接配信するため、
+push だけで公開が更新されます。
+
+### CIを有効にする
+
+GitHub CLI のトークンに `workflow` スコープが無いと、`.github/workflows/` 配下は push できません。
+一度だけ次を実行してから push してください。
+
+```bash
+gh auth refresh -h github.com -s workflow
+git add .github && git commit -m "CI ワークフローを追加" && git push
+```
 
 ## 秘密情報
 
