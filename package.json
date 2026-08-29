@@ -1,0 +1,14 @@
+{
+  "name": "kioku",
+  "version": "0.1.0",
+  "description": "Kioku（記憶）— リアルタイム文字起こし・複数メモ管理アプリ（ブラウザ/PWA・個人用MVP）",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

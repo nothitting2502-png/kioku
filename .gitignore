@@ -1,0 +1,36 @@
+# ==========================================================
+# 個人データは絶対にリポジトリへ入れない（提案書 5.2 / 9 章）
+# ==========================================================
+# 録音音声・文字起こし本文・個人メモのエクスポート
+*.webm
+*.m4a
+*.mp3
+*.wav
+*.ogg
+/data/
+/exports/
+*-backup.json
+*-バックアップ.json
+
+# 秘密情報
+.env
+.env.*
+*.pem
+*.key
+*.keystore
+*.jks
+secrets.json
+local.properties
+
+# OS / エディタ
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ビルド・依存
+node_modules/
+dist/
+build/
+coverage/

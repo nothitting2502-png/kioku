@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kioku — テスト</title>
+  <style>
+    body { font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; margin: 0; padding: 20px; background: #f7f7f8; color: #16181d; }
+    h1 { font-size: 18px; }
+    #summary { font-weight: 700; padding: 10px 14px; border-radius: 10px; margin: 12px 0; background: #e5e7eb; }
+    #summary.pass { background: #dcfce7; color: #166534; }
+    #summary.fail { background: #fee2e2; color: #991b1b; }
+    li { font-size: 14px; line-height: 1.8; list-style: none; }
+    li.ng { color: #b91c1c; }
+    .err { font-size: 12px; color: #b91c1c; padding-left: 22px; white-space: pre-wrap; }
+    ul { padding: 0; }
+  </style>
+  <!-- Node の組み込みモジュールをブラウザ用の代替へ差し替える -->
+  <script type="importmap">
+  {
+    "imports": {
+      "node:test": "./shim-test.js",
+      "node:assert/strict": "./shim-assert.js",
+      "node:assert": "./shim-assert.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <h1>Kioku — ユニットテスト（ブラウザ実行）</h1>
+  <p style="font-size:13px;color:#61656e">Node.js を入れていない端末でも、この画面で <code>test/*.test.js</code> をそのまま実行できます。</p>
+  <div id="summary">実行中…</div>
+  <ul id="list"></ul>
+
+  <script type="module">
+    import { runAll } from './shim-test.js';
+    import './model.test.js';
+    import './time.test.js';
+    import './search.test.js';
+    import './export.test.js';
+
+    const list = document.getElementById('list');
+    const summary = document.getElementById('summary');
+
+    const results = await runAll((r) => {
+      const li = document.createElement('li');
+      li.className = r.ok ? 'ok' : 'ng';
+      li.textContent = `${r.ok ? '✓' : '✗'} ${r.name}`;
+      list.append(li);
+      if (!r.ok) {
+        const p = document.createElement('div');
+        p.className = 'err';
+        p.textContent = r.error;
+        list.append(p);
+      }
+    });
+
+    const failed = results.filter((r) => !r.ok).length;
+    summary.textContent = failed === 0
+      ? `すべて成功：${results.length} 件`
+      : `失敗 ${failed} 件 / 全 ${results.length} 件`;
+    summary.className = failed === 0 ? 'pass' : 'fail';
+    window.__TEST_RESULT__ = { total: results.length, failed, results };
+  </script>
+</body>
+</html>
